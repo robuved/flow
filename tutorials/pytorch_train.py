@@ -213,7 +213,8 @@ def main():
     start = time.time()
     num_updates = int(
         args.num_env_steps) // args.num_steps // args.num_processes
-
+    num_episodes_finished = 0
+    
     for j in range(num_updates):
 
         if args.use_linear_lr_decay:
@@ -234,6 +235,7 @@ def main():
 
             for info in infos:
                 if 'episode' in info.keys():
+                    num_episodes_finished += 1
                     episode_rewards.append(info['episode']['r'])
 
             # If done then clean the history of observations.
@@ -287,11 +289,15 @@ def main():
                 getattr(utils.get_vec_normalize(envs), 'ob_rms', None)
             ], os.path.join(save_path, args.env_name + ".pt"))
 
+        if j % args.log_interval == 0:
+            print(f"Updates {j} - num episode finished {num_episodes_finished}.")
+
         if len(episode_rewards) > args.log_interval:
             total_num_steps = (j + 1) * args.num_processes * args.num_steps
             end = time.time()
             print(
-                "Updates {}, num timesteps {}, FPS {} \n Last {} training episodes: mean/median reward {:.1f}/{:.1f}, min/max reward {:.1f}/{:.1f}\n"
+                "Updates {}, num timesteps {}, FPS {} \n Last {} training episodes: "
+                "mean/median reward {:.1f}/{:.1f}, min/max reward {:.1f}/{:.1f}\n"
                 .format(j, total_num_steps,
                         int(total_num_steps / (end - start)),
                         len(episode_rewards), np.mean(episode_rewards),
