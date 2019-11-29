@@ -514,7 +514,8 @@ class Env(gym.Env):
             initial_ids = self.initial_ids
 
         # check to make sure all vehicles have been spawned
-        if len(self.initial_ids) > len(initial_ids):
+        all_vehicles_spawned = getattr(self.env_params, "all_vehicles_spawned", False)
+        if all_vehicles_spawned and len(self.initial_ids) > len(initial_ids):
             missing_vehicles = list(set(self.initial_ids) - set(initial_ids))
             msg = '\nNot enough vehicles have spawned! Bad start?\n' \
                   'Missing vehicles / initial state:\n'
