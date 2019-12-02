@@ -8,7 +8,8 @@ from flow.utils.rllib import FlowParamsEncoder
 import json
 
 
-def make_lab_env(env_name):
+def make_lab_env(env_name, sim_step=0.1, render=False, emission_path='data',
+                 restart_instance=True, print_warnings=False):
 
     assert env_name in LAB_ENVS, f"{env_name} not in LAB_ENVS"
 
@@ -27,8 +28,8 @@ def make_lab_env(env_name):
     add_env_params["action_space_box"] = True
     env_params = EnvParams(additional_params=add_env_params, horizon=ENV["HORIZON"])
 
-    sumo_params = SumoParams(sim_step=0.1, render=False, emission_path='data',
-                             restart_instance=True, print_warnings=False)
+    sumo_params = SumoParams(sim_step=sim_step, render=render, emission_path=emission_path,
+                             restart_instance=restart_instance, print_warnings=print_warnings)
 
     flow_params = dict(
         # name of the experiment
