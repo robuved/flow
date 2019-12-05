@@ -17,7 +17,7 @@ ADDITIONAL_ENV1_PARAMS = {
     # lane change duration for autonomous vehicles, in s. Autonomous vehicles
     # reject new lane changing commands for this duration after successfully
     # changing lanes.
-    "lane_change_duration": 5,
+    "lane_change_duration": 0,
     # desired velocity for all vehicles in the network, in m/s
     "target_velocity": 10,
     # specifies whether vehicles are to be sorted by position during a
@@ -196,15 +196,7 @@ class LaneChangeAccelEnv1(AccelEnv):
 
     def _apply_rl_actions(self, actions):
         """See class definition."""
-        if isinstance(actions[0], np.ndarray):
-            acceleration = actions[0]
-            direction = np.array(actions[1:])
-        else:
-            acceleration, direction = np.split(actions, 2)
-
-        # discrete lane change
-        direction = direction.clip(0., 2.)
-        direction = (direction - 1).astype(np.int)
+        acceleration, direction = np.split(actions, 2)
 
         # re-arrange actions according to mapping in observation space
         if len(self.k.vehicle.get_rl_ids()) <= 0:
@@ -216,15 +208,17 @@ class LaneChangeAccelEnv1(AccelEnv):
         ]
 
         # represents vehicles that are allowed to change lanes
-        non_lane_changing_veh = \
-            [self.time_counter <=
-             self.env_params.additional_params["lane_change_duration"]
-             + self.k.vehicle.get_last_lc(veh_id)
-             for veh_id in sorted_rl_ids]
+        lane_change_duration = self.env_params.additional_params["lane_change_duration"]
+        if lane_change_duration > 0:
+            non_lane_changing_veh = \
+                [self.time_counter <=
+                 self.env_params.additional_params["lane_change_duration"]
+                 + self.k.vehicle.get_last_lc(veh_id)
+                 for veh_id in sorted_rl_ids]
 
-        # vehicle that are not allowed to change have their directions set to 0
-        direction[non_lane_changing_veh] = \
-            np.array([0] * sum(non_lane_changing_veh))
+            # vehicle that are not allowed to change have their directions set to 0
+            direction[non_lane_changing_veh] = \
+                np.array([0] * sum(non_lane_changing_veh))
 
         self.k.vehicle.apply_acceleration(sorted_rl_ids, acc=acceleration)
         self.k.vehicle.apply_lane_change(sorted_rl_ids, direction=direction)
@@ -235,3 +229,47 @@ class LaneChangeAccelEnv1(AccelEnv):
         if self.k.vehicle.num_rl_vehicles > 0:
             for veh_id in self.k.vehicle.get_human_ids():
                 self.k.vehicle.set_observed(veh_id)
+
+    def clip_actions(self, rl_actions=None):
+        """Clip & redo direction the actions passed from the RL agent.
+
+        Parameters
+        ----------
+        rl_actions : array_like
+            list of actions provided by the RL algorithm
+
+        Returns
+        -------
+        array_like
+            The rl_actions clipped according to the box or boxes
+        """
+        # ignore if no actions are issued
+        if rl_actions is None:
+            return
+
+        # clip according to the action space requirements
+        if isinstance(self.action_space, Box):
+            rl_actions = np.clip(
+                rl_actions,
+                a_min=self.action_space.low,
+                a_max=self.action_space.high)
+        elif isinstance(self.action_space, Tuple):
+            for idx, action in enumerate(rl_actions):
+                subspace = self.action_space[idx]
+                if isinstance(subspace, Box):
+                    rl_actions[idx] = np.clip(
+                        action,
+                        a_min=subspace.low,
+                        a_max=subspace.high)
+
+        if isinstance(rl_actions[0], np.ndarray):
+            acceleration = rl_actions[0]
+            direction = np.array(rl_actions[1:])
+        else:
+            acceleration, direction = np.split(rl_actions, 2)
+
+        # discrete lane change
+        direction = direction.clip(0., 2.)
+        direction = (direction - 1).astype(np.int)
+
+        return np.concatenate([acceleration, direction])
