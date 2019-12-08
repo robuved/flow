@@ -53,11 +53,14 @@ class LaneChangeAccelEnv1(AccelEnv):
             if p not in env_params.additional_params:
                 raise KeyError(
                     'Environment parameter "{}" not supplied'.format(p))
-        self.collision_reward = ADDITIONAL_ENV1_PARAMS["collision_reward"]
-        self.frontal_collision_distance = ADDITIONAL_ENV1_PARAMS["frontal_collision_distance"]
-        self.lateral_collision_distance = ADDITIONAL_ENV1_PARAMS["lateral_collision_distance"]
-        self.forward_progress_gain = ADDITIONAL_ENV1_PARAMS["forward_progress_gain"]
-        self.action_space_box = ADDITIONAL_ENV1_PARAMS["action_space_box"]
+
+        add_param = env_params.additional_params
+
+        self.collision_reward = add_param["collision_reward"]
+        self.frontal_collision_distance = add_param["frontal_collision_distance"]
+        self.lateral_collision_distance = add_param["lateral_collision_distance"]
+        self.forward_progress_gain = add_param["forward_progress_gain"]
+        self.action_space_box = add_param["action_space_box"]
 
         super().__init__(env_params, sim_params, network, simulator)
 
