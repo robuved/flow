@@ -17,12 +17,14 @@ class MyMixedDistribution:
         return r
 
     def entropy(self):
-        e = tuple(map(lambda x: x.entropy(), self.children))
-        return e[0]
+        e = tuple(map(lambda x: x.entropy().view(-1, 1), self.children))
+        r = torch.cat(e, dim=1).sum(dim=1, keepdim=True)
+        return r
 
     def sample(self):
         e = tuple(map(lambda x: x.sample().float(), self.children))
         return column_to_row(e)
+
 
 class MixedDistributionModule(nn.Module):
     def __init__(self, num_inputs):
