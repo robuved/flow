@@ -100,6 +100,7 @@ class LaneChangeAccelEnv2(LaneChangeAccelEnv1):
         act_speed_f = state[0]
         speed_noise = np.random.normal(0, self._crt_speed_noise_std) / max_speed
         state[0] += speed_noise
+        state[0] = np.clip(state[0], 0, 1.)
 
         # Add noise to RL agent pos
         if self.step_counter % self.pos_noise_steps_reset == 0:
@@ -107,6 +108,7 @@ class LaneChangeAccelEnv2(LaneChangeAccelEnv1):
         self._crt_pos_noise_accum += np.random.normal(0, self._crt_pos_noise_std) * act_speed_f
         self._pos_noise.append(self._crt_pos_noise_accum)
         state[no_cars] += (self._crt_pos_noise_accum / length)
+        state[no_cars] = state[no_cars] % 1.
 
         return state
 
