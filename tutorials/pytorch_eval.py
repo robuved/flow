@@ -17,10 +17,6 @@ from a2c_ppo_acktr.storage import RolloutStorage
 from a2c_ppo_acktr import utils
 from a2c_ppo_acktr.envs import make_vec_envs
 
-from tutorials.model import MyPolicy
-
-
-# https://github.com/flow-project/flow/issues/321
 
 def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
              device):
@@ -90,11 +86,9 @@ def main():
 
     envs = make_vec_envs(args.env_name, args.seed, args.num_processes,
                          args.gamma, args.log_dir, device, False)
+    save_path = os.path.join(args.save_dir, args.algo)
+    actor_critic, env = torch.load(os.path.join(save_path, args.env_name + ".pt"))
 
-    actor_critic = Policy(
-        envs.observation_space.shape,
-        envs.action_space,
-        base_kwargs={'recurrent': args.recurrent_policy})
     actor_critic.to(device)
 
     if args.algo == 'a2c':
@@ -129,7 +123,7 @@ def main():
         file_name = os.path.join(
             args.gail_experts_dir, "trajs_{}.pt".format(
                 args.env_name.split('-')[0].lower()))
-        
+
         expert_dataset = gail.ExpertDataset(
             file_name, num_trajectories=4, subsample_frequency=20)
         drop_last = len(expert_dataset) > args.gail_batch_size
@@ -215,26 +209,19 @@ def main():
         # save for every interval-th episode or for the last epoch
         if (j % args.save_interval == 0
                 or j == num_updates - 1) and args.save_dir != "":
-            save_path = os.path.join(args.save_dir, args.algo)
             try:
                 os.makedirs(save_path)
             except OSError:
                 pass
 
-            torch.save([
-                actor_critic,
-                getattr(utils.get_vec_normalize(envs), 'ob_rms', None)
-            ], os.path.join(save_path, args.env_name + ".pt"))
-
         if j % args.log_interval == 0 and len(episode_rewards) > 1:
             total_num_steps = (j + 1) * args.num_processes * args.num_steps
             end = time.time()
             print(
-                "Updates {}, num timesteps {}, FPS {}, Elapsed {:.2f} s \n Last {} training episodes: "
+                "Updates {}, num timesteps {}, FPS {} \n Last {} training episodes: "
                 "mean/median reward {:.1f}/{:.1f}, min/max reward {:.1f}/{:.1f}\n"
                 .format(j, total_num_steps,
                         int(total_num_steps / (end - start)),
-                        end - start,
                         len(episode_rewards), np.mean(episode_rewards),
                         np.median(episode_rewards), np.min(episode_rewards),
                         np.max(episode_rewards), dist_entropy, value_loss,
