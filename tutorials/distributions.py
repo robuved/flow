@@ -25,6 +25,10 @@ class MyMixedDistribution:
         e = tuple(map(lambda x: x.sample().float(), self.children))
         return column_to_row(e)
 
+    def mode(self):
+        e = tuple(map(lambda x: x.mode().float(), self.children))
+        return column_to_row(e)
+
 
 class MixedDistributionModule(nn.Module):
     def __init__(self, num_inputs):
