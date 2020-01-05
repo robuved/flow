@@ -12,7 +12,7 @@ class MyMixedDistribution:
     def log_probs(self, actions):
         r = []
         for i, child in enumerate(self.children):
-            r.append(child.log_probs(actions[:, i]).view(-1, 1))
+            r.append(child.log_probs(actions[:, i].view(-1, 1)).view(-1, 1))
         r = torch.cat(r, dim=1).sum(dim=1, keepdim=True)
         return r
 
@@ -23,7 +23,8 @@ class MyMixedDistribution:
 
     def sample(self):
         e = tuple(map(lambda x: x.sample().float(), self.children))
-        return column_to_row(e)
+        s = column_to_row(e)
+        return s
 
     def mode(self):
         e = tuple(map(lambda x: x.mode().float(), self.children))

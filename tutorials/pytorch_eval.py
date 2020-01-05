@@ -39,7 +39,7 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
         num_processes, actor_critic.recurrent_hidden_state_size, device=device)
     eval_masks = torch.zeros(num_processes, 1, device=device)
 
-    while len(eval_episode_rewards) < 2:
+    while len(eval_episode_rewards) < 10:
         with torch.no_grad():
             _, action, _, eval_recurrent_hidden_states = actor_critic.act(
                 obs,
@@ -91,7 +91,7 @@ def main():
     envs = make_vec_envs(args.env_name, args.seed, args.num_processes,
                          args.gamma, args.log_dir, device, False)
     save_path = os.path.join(args.save_dir, args.algo)
-    actor_critic, env = torch.load(os.path.join(save_path, args.env_name + ".pt"))
+    actor_critic, ob_rms = torch.load(os.path.join(save_path, args.env_name + ".pt"))
 
     actor_critic.to(device)
 
