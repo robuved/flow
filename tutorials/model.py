@@ -94,7 +94,7 @@ class MyRolloutStorage(storage.RolloutStorage):
                                               self.actions.size(-1))[indices]
             value_preds_batch = self.value_preds[:-1].view(-1, 1)[indices]
             return_batch = self.returns[:-1].view(-1, 1)[indices]
-            rewards_batch = self.rewards[:-1].view(-1, 1)[indices]
+            rewards_batch = self.rewards.view(-1, 1)[indices]
             masks_batch = self.masks[:-1].view(-1, 1)[indices]
             old_action_log_probs_batch = self.action_log_probs.view(-1,
                                                                     1)[indices]
@@ -105,7 +105,7 @@ class MyRolloutStorage(storage.RolloutStorage):
 
             batch_aux_data = {}
             for key, data in aux_data.items():
-                batch_aux_data[key] = data.view(-1, data.size(-1))[indices]
+                batch_aux_data[key] = data[:num_steps].view(-1, data.size(-1))[indices]
             yield obs_batch, recurrent_hidden_states_batch, actions_batch, \
                   value_preds_batch, return_batch, rewards_batch, masks_batch, old_action_log_probs_batch, adv_targ, batch_aux_data
 
