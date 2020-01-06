@@ -123,7 +123,8 @@ def main():
             lr=args.lr,
             eps=args.eps,
             max_grad_norm=args.max_grad_norm,
-            aux_coefs=aux_losses_coef)
+            aux_coefs=aux_losses_coef,
+            device=device)
     elif args.algo == 'acktr':
         agent = algo.A2C_ACKTR(
             actor_critic, args.value_loss_coef, args.entropy_coef, acktr=True)

@@ -105,7 +105,9 @@ class MyRolloutStorage(storage.RolloutStorage):
 
             batch_aux_data = {}
             for key, data in aux_data.items():
-                batch_aux_data[key] = data[:num_steps].view(-1, data.size(-1))[indices]
+                data = data[:num_steps]
+
+                batch_aux_data[key] = data.view(-1, data.size(-1))[indices]
             yield obs_batch, recurrent_hidden_states_batch, actions_batch, \
                   value_preds_batch, return_batch, rewards_batch, masks_batch, old_action_log_probs_batch, adv_targ, batch_aux_data
 
@@ -121,7 +123,8 @@ class MyPPO(algo.PPO):
                  eps=None,
                  max_grad_norm=None,
                  use_clipped_value_loss=True,
-                 aux_coefs=None):
+                 aux_coefs=None,
+                 device=None):
         super().__init__(actor_critic,
                          clip_param,
                          ppo_epoch,
@@ -133,6 +136,7 @@ class MyPPO(algo.PPO):
                          max_grad_norm=max_grad_norm,
                          use_clipped_value_loss=use_clipped_value_loss)
         self.aux_coefs = aux_coefs
+        self.device = device
         self.init_aux_outputs()
 
     def update(self, rollouts):
@@ -185,12 +189,12 @@ class MyPPO(algo.PPO):
 
                 self.optimizer.zero_grad()
                 loss = value_loss * self.value_loss_coef + action_loss - dist_entropy * self.entropy_coef
-                print(f"Value {value_loss * self.value_loss_coef}; Action {action_loss}; Entropy { - dist_entropy * self.entropy_coef}; ", end='')
-                for key, coef in self.aux_coefs.items():
-                    if coef > 0:
-                        loss += coef * aux_losses[key]
-                        print(f"{key} {aux_losses[key]}; ", end='')
-
+                # print(f"Value {value_loss * self.value_loss_coef}; Action {action_loss}; Entropy { - dist_entropy * self.entropy_coef}; ", end='')
+                # for key, coef in self.aux_coefs.items():
+                #     if coef > 0:
+                #         loss += coef * aux_losses[key]
+                #         print(f"{key} {aux_losses[key]}; ", end='')
+                # print()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.actor_critic.parameters(),
                                          self.max_grad_norm)
@@ -240,8 +244,8 @@ class MyPPO(algo.PPO):
             only_pos_rel_pos = rel_pos.clone()
             only_pos_rel_pos[only_pos_rel_pos <= 0] = inf_rel_pos
 
-            closest_from_only_pos, _ = torch.min(only_pos_rel_pos, dim=2)
-            closest_from_all, _ = torch.min(rel_pos, dim=2)
+            closest_from_only_pos, _ = torch.min(only_pos_rel_pos, dim=2, keepdim=True)
+            closest_from_all, _ = torch.min(rel_pos, dim=2, keepdim=True)
             closest_from_all += 1
 
             closest = closest_from_only_pos
@@ -274,22 +278,22 @@ class MyPPO(algo.PPO):
         coefs = self.aux_coefs
         feature_size = self.actor_critic.base.output_size
         if 'aux_others' in coefs and coefs['aux_others'] > 0:
-            self.aux_module['acc_predictor'] = DiagGaussian(feature_size, 23)
+            self.aux_module['acc_predictor'] = DiagGaussian(feature_size, 23).to(self.device)
             self.aux_module['lane_predictors'] = []
             for i in range(23):
-                self.aux_module['lane_predictors'].append(Categorical(feature_size, 2 * 23))
+                self.aux_module['lane_predictors'].append(Categorical(feature_size, 2 * 23).to(self.device))
 
         # aux_reward_coef = predict reward
         if 'aux_reward' in coefs and coefs['aux_reward'] > 0:
-            self.aux_module['reward_predictor'] = DiagGaussian(feature_size, 1)
+            self.aux_module['reward_predictor'] = DiagGaussian(feature_size, 1).to(self.device)
 
         # aux_closest_car_coef = penalize distance to closest car
         if 'aux_closest_car' in coefs and coefs['aux_closest_car'] > 0:
-            self.aux_module['closest_car_predictor'] = DiagGaussian(feature_size, 1)
+            self.aux_module['closest_car_predictor'] = DiagGaussian(feature_size, 1).to(self.device)
 
         # aux_high_speed_lane = penalize if on lower speed lane
         if 'aux_high_speed_lane' in coefs and coefs['aux_high_speed_lane'] > 0:
-            self.aux_module['on_high_speed_lane_predictor'] = Categorical(feature_size, 2)
+            self.aux_module['on_high_speed_lane_predictor'] = Categorical(feature_size, 2).to(self.device)
 
     def compute_aux_losses(self, features, rewards, aux_data):
         coefs = self.aux_coefs
@@ -300,8 +304,8 @@ class MyPPO(algo.PPO):
             losses['aux_others'] = (predicted_acc - aux_data['acc']).pow(2).mean()
 
             for car_index, predictor in enumerate(self.aux_module['lane_predictors']):
-                s = predictor(features).sample()
-                losses['aux_others'] += F.binary_cross_entropy_with_logits(s, aux_data['lane_change'], reduction='none').mean()
+                s = predictor(features).sample().float()
+                losses['aux_others'] += F.binary_cross_entropy_with_logits(s, aux_data['lane_change'][:, car_index:car_index+1], reduction='none').mean()
 
         # aux_reward_coef = predict reward
         if 'aux_reward' in coefs and coefs['aux_reward'] > 0:
@@ -312,12 +316,12 @@ class MyPPO(algo.PPO):
         # aux_closest_car_coef = penalize distance to closest car
         if 'aux_closest_car' in coefs and coefs['aux_closest_car'] > 0:
             closest = self.aux_module['closest_car_predictor'](features).sample()
-            losses['aux_closest_car'] = (closest - aux_data['closest_car_predictor']).pow(2)\
+            losses['aux_closest_car'] = (closest - aux_data['distance_to_closest']).pow(2).mean()
                                         # + closest
 
         # aux_high_speed_lane = penalize if on lower speed lane
         if 'aux_high_speed_lane' in coefs and coefs['aux_high_speed_lane'] > 0:
-            loss_on_high_speed_lane = self.aux_module['on_high_speed_lane_predictor'](features).sample()
+            loss_on_high_speed_lane = self.aux_module['on_high_speed_lane_predictor'](features).sample().float()
             losses['aux_high_speed_lane'] = F.binary_cross_entropy_with_logits(loss_on_high_speed_lane,
                                                                                aux_data['on_higher_mean_speed_lane'])
         return losses
