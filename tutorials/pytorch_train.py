@@ -17,7 +17,7 @@ from a2c_ppo_acktr.storage import RolloutStorage
 from a2c_ppo_acktr import utils
 from a2c_ppo_acktr.envs import make_vec_envs
 
-from tutorials.model import MyPolicy
+from tutorials.model import MyPolicy, MyRolloutStorage, MyPPO, get_my_args
 
 
 # https://github.com/flow-project/flow/issues/321
@@ -66,7 +66,7 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
 
 
 def main():
-    args = get_args()
+    args = get_my_args()
 
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
@@ -97,6 +97,12 @@ def main():
         base_kwargs={'recurrent': args.recurrent_policy})
     actor_critic.to(device)
 
+    aux_losses_coef = {
+        'aux_others': args.aux_others_coef,
+        'aux_reward': args.aux_reward_coef,
+        'aux_closest_car': args.aux_closest_car_coef,
+        'aux_high_speed_lane': args.aux_high_speed_lane_coef
+    }
     if args.algo == 'a2c':
         agent = algo.A2C_ACKTR(
             actor_critic,
@@ -107,7 +113,7 @@ def main():
             alpha=args.alpha,
             max_grad_norm=args.max_grad_norm)
     elif args.algo == 'ppo':
-        agent = algo.PPO(
+        agent = MyPPO(
             actor_critic,
             args.clip_param,
             args.ppo_epoch,
@@ -116,7 +122,8 @@ def main():
             args.entropy_coef,
             lr=args.lr,
             eps=args.eps,
-            max_grad_norm=args.max_grad_norm)
+            max_grad_norm=args.max_grad_norm,
+            aux_coefs=aux_losses_coef)
     elif args.algo == 'acktr':
         agent = algo.A2C_ACKTR(
             actor_critic, args.value_loss_coef, args.entropy_coef, acktr=True)
@@ -139,7 +146,7 @@ def main():
             shuffle=True,
             drop_last=drop_last)
 
-    rollouts = RolloutStorage(args.num_steps, args.num_processes,
+    rollouts = MyRolloutStorage(args.num_steps, args.num_processes,
                               envs.observation_space.shape, envs.action_space,
                               actor_critic.recurrent_hidden_state_size)
 
