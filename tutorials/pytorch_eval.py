@@ -96,7 +96,7 @@ def main():
     actor_critic.to(device)
 
 
-    ob_rms = utils.get_vec_normalize(envs).ob_rms
+    # ob_rms = utils.get_vec_normalize(envs).ob_rms
     evaluate(actor_critic, ob_rms, args.env_name, args.seed,
              args.num_processes, eval_log_dir, device)
 
