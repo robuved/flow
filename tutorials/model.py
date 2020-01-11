@@ -34,8 +34,8 @@ aux_high_speed_lane = penalize if on low speed lane
 
 
 TRAINED LAB1 on ENV1
-  ENV1 2314
-  ENV2 2288
+  ENV1 2348
+  ENV2 2407
 
 TRAINED LAB2 on ENV2
 FIRST TRIO
