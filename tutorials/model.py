@@ -190,10 +190,10 @@ class MyPPO(algo.PPO):
                 self.optimizer.zero_grad()
                 loss = value_loss * self.value_loss_coef + action_loss - dist_entropy * self.entropy_coef
                 # print(f"Value {value_loss * self.value_loss_coef}; Action {action_loss}; Entropy { - dist_entropy * self.entropy_coef}; ", end='')
-                # for key, coef in self.aux_coefs.items():
-                #     if coef > 0:
-                #         loss += coef * aux_losses[key]
-                #         print(f"{key} {aux_losses[key]}; ", end='')
+                for key, coef in self.aux_coefs.items():
+                    if coef > 0:
+                        loss += coef * aux_losses[key]
+                        # print(f"{key} {aux_losses[key]}; ", end='')
                 # print()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.actor_critic.parameters(),
@@ -474,7 +474,7 @@ def get_my_args():
         default=False,
         help='use a linear schedule on the learning rate')
 
-    # --aux-others-coef  0.01 --aux-reward-coef  0.01 --aux-closest-car-coef  0.01 --aux-high-speed-lane-coef 0.01
+    # --aux-others-coef  0.005 --aux-reward-coef  0.02 --aux-closest-car-coef  0.02 --aux-high-speed-lane-coef 0.05
     parser.add_argument(
         '--aux-others-coef',
         type=float,
