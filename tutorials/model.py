@@ -4,6 +4,10 @@ from tutorials.distributions import MixedDistributionModule
 from a2c_ppo_acktr import algo
 from a2c_ppo_acktr import storage
 from a2c_ppo_acktr import distributions
+from a2c_ppo_acktr.model import NNBase
+from a2c_ppo_acktr.utils import init
+import numpy as np
+
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 
 import torch.nn as nn
@@ -50,6 +54,7 @@ FIRST TRIO
 class MyPolicy(Policy):
     def __init__(self, obs_shape, action_space, base=None, base_kwargs=None):
         super().__init__(obs_shape, action_space, base, base_kwargs)
+        self.base = MYMLPBase(obs_shape[0], **base_kwargs)
         self.dist = MixedDistributionModule(self.base.output_size)
 
     def evaluate_actions(self, inputs, rnn_hxs, masks, action):
@@ -316,20 +321,20 @@ class MyPPO(algo.PPO):
         coefs = self.aux_coefs
         feature_size = self.actor_critic.base.output_size
         if 'aux_others' in coefs and coefs['aux_others'] > 0:
-            self.aux_module['acc_predictors'] = Bernoulli(feature_size, 23).to(self.device)
-            self.aux_module['lane_predictors'] = Bernoulli(feature_size, 23).to(self.device)
+            self.aux_module['acc_predictors'] = AuxHead(input_count=feature_size, output_size=23).to(self.device)
+            self.aux_module['lane_predictors'] = AuxHead(input_count=feature_size, output_size=23).to(self.device)
 
         # aux_reward_coef = predict reward
         if 'aux_reward' in coefs and coefs['aux_reward'] > 0:
-            self.aux_module['reward_predictor'] = Bernoulli(feature_size, 1).to(self.device)
+            self.aux_module['reward_predictor'] = AuxHead(input_count=feature_size, output_size=1).to(self.device)
 
         # aux_closest_car_coef = penalize distance to closest car
         if 'aux_closest_car' in coefs and coefs['aux_closest_car'] > 0:
-            self.aux_module['closest_car_predictor'] = Bernoulli(feature_size, 1).to(self.device)
+            self.aux_module['closest_car_predictor'] = AuxHead(input_count=feature_size, output_size=1).to(self.device)
 
         # aux_high_speed_lane = penalize if on lower speed lane
         if 'aux_high_speed_lane' in coefs and coefs['aux_high_speed_lane'] > 0:
-            self.aux_module['on_high_speed_lane_predictor'] = Bernoulli(feature_size, 1).to(self.device)
+            self.aux_module['on_high_speed_lane_predictor'] = AuxHead(input_count=feature_size, output_size=1).to(self.device)
 
     def compute_aux_losses(self, features, rewards, aux_data):
         coefs = self.aux_coefs
@@ -363,6 +368,62 @@ class MyPPO(algo.PPO):
                                                        aux_data['on_higher_mean_speed_lane'], reduction='none').mean()
 
         return losses
+
+
+class MYMLPBase(NNBase):
+    def __init__(self, num_inputs, recurrent=False, hidden_size=128):
+        super(MYMLPBase, self).__init__(recurrent, num_inputs, hidden_size)
+
+        if recurrent:
+            num_inputs = hidden_size
+
+        init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
+                               constant_(x, 0), np.sqrt(2))
+
+        self.backbone = nn.Sequential(
+            init_(nn.Linear(num_inputs, hidden_size)), nn.Tanh(),
+            init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
+            init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
+            init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
+        )
+
+        self.critic_linear = init_(nn.Linear(hidden_size, 1))
+
+        self.train()
+
+    def forward(self, inputs, rnn_hxs, masks):
+        x = inputs
+
+        if self.is_recurrent:
+            x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks)
+
+        hidden = self.backbone(x)
+        return self.critic_linear(hidden), hidden, rnn_hxs
+
+
+class AuxHead(nn.Module):
+    def __init__(self, hidden_layers=2, hidden_size=128, input_count=1, output_size=1, output_distr_type='bernoulli'):
+        super().__init__()
+        self.hidden_layers = nn.ModuleList()
+        init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
+                               constant_(x, 0), np.sqrt(2))
+        prev_size = input_count
+        for _ in range(hidden_layers):
+            self.hidden_layers.append(
+                init_(nn.Linear(input_count, hidden_size))
+            )
+            prev_size = hidden_size
+        if output_distr_type == 'bernoulli':
+            self.dist = Bernoulli(prev_size, output_size)
+        else:
+            self.dist = DiagGaussian(prev_size, output_size)
+
+    def forward(self, input):
+        x = input
+        for layer in self.hidden_layers:
+            x = layer(x)
+            x = torch.tanh(x)
+        return self.dist(x)
 
 
 def get_my_args():
@@ -545,3 +606,5 @@ def get_my_args():
             'Recurrent policy is not implemented for ACKTR'
 
     return args
+
+
