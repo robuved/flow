@@ -1,5 +1,5 @@
 from a2c_ppo_acktr.model import Policy
-from a2c_ppo_acktr.distributions import Categorical, DiagGaussian
+from a2c_ppo_acktr.distributions import Categorical, DiagGaussian, Bernoulli
 from tutorials.distributions import MixedDistributionModule
 from a2c_ppo_acktr import algo
 from a2c_ppo_acktr import storage
@@ -9,7 +9,7 @@ from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
-
+from torch.nn.functional import binary_cross_entropy_with_logits as BNE
 import argparse
 
 '''
@@ -105,9 +105,12 @@ class MyRolloutStorage(storage.RolloutStorage):
 
             batch_aux_data = {}
             for key, data in aux_data.items():
-                data = data[:num_steps]
-
-                batch_aux_data[key] = data.view(-1, data.size(-1))[indices]
+                if isinstance(data, list):
+                    batch_aux_data[key] = []
+                    for d in data:
+                        batch_aux_data[key].append(d.view(-1, d.size(-1))[indices])
+                else:
+                    batch_aux_data[key] = data.view(-1, data.size(-1))[indices]
             yield obs_batch, recurrent_hidden_states_batch, actions_batch, \
                   value_preds_batch, return_batch, rewards_batch, masks_batch, old_action_log_probs_batch, adv_targ, batch_aux_data
 
@@ -219,57 +222,92 @@ class MyPPO(algo.PPO):
         if 'aux_others' in coefs and coefs['aux_others'] > 0:
             # speed + pos + lane in .obs
             # compute acc at each step
-            data['acc'] = torch.empty_like(speed)
-            data['acc'][:-1] = speed[1:] - speed[:-1]
-            # data['bad_acc'] = torch.full(data['acc'].shape, 0)
-            # data['bad_acc'][-1] = 1
+            acc = speed[1:] - speed[:-1]
+            accelerates = acc > 0
+            data['acc'] = accelerates.float()
 
-            data['lane_change'] = torch.empty_like(lane)
-            data['lane_change'][:-1] = (lane[:-1] == lane[1:]).float()
-            # data['bad_lane_change'] = torch.full(data['lane_change'].shape, 0)
-            # data['bad_lane_change'][-1] = 1
+            data['lane_change'] = (lane[:-1] != lane[1:]).float()
 
+        speed = speed[:-1]
+        pos = pos[:-1]
+        lane = lane[:-1]
         # aux_reward_coef = predict reward
         if 'aux_reward' in coefs and coefs['aux_reward'] > 0:
-            # nothing, rollouts already contain rewards
-            pass
+            rewards = rollouts.rewards
+            rewards_categ = torch.ones_like(rewards)
+            rewards_categ[rewards < 0] = 1
+            # rewards_categ[rewards > 3] = 2
+            data['rewards_categ'] = rewards_categ
 
         # aux_closest_car_coef = penalize distance to closest car
         if 'aux_closest_car' in coefs and coefs['aux_closest_car'] > 0:
-            different_lane = lane != lane[:, :, 0:1]
+            lane_labels, _ = torch.sort(torch.unique(lane)[:2])
             rel_pos = pos - pos[:, :, 0:1]
             inf_rel_pos = 1.1
-            rel_pos[different_lane] = inf_rel_pos
+            data['distance_to_closest'] = []
 
-            only_pos_rel_pos = rel_pos.clone()
-            only_pos_rel_pos[only_pos_rel_pos <= 0] = inf_rel_pos
+            for lane_label in lane_labels:
+                different_lane = lane != lane_label
+                rel_pos_lane = rel_pos.clone()
+                rel_pos_lane[different_lane] = inf_rel_pos
 
-            closest_from_only_pos, _ = torch.min(only_pos_rel_pos, dim=2, keepdim=True)
-            closest_from_all, _ = torch.min(rel_pos, dim=2, keepdim=True)
-            closest_from_all += 1
+                only_pos_rel_pos = rel_pos_lane.clone()
+                only_pos_rel_pos[only_pos_rel_pos <= 0] = inf_rel_pos
 
-            closest = closest_from_only_pos
-            where_close_from_all = closest_from_only_pos > closest_from_all
-            closest[where_close_from_all] = closest_from_all[where_close_from_all]
+                closest_from_only_pos, _ = torch.min(only_pos_rel_pos, dim=2, keepdim=True)
+                closest_from_all, _ = torch.min(rel_pos_lane, dim=2, keepdim=True)
+                closest_from_all += 1
 
-            data['distance_to_closest'] = closest
+                closest = closest_from_only_pos
+                where_close_from_all = closest_from_only_pos > closest_from_all
+                closest[where_close_from_all] = closest_from_all[where_close_from_all]
+
+                data['distance_to_closest'].append(closest)
+            max_distance, max_distance_lane = torch.max(torch.cat(data['distance_to_closest'], dim=2), dim=2, keepdim=True)
+
+            own_lane = lane[:, :, 0:1]
+            own_lane_index = max_distance_lane.clone()
+            for lane_index, lane_label in enumerate(lane_labels):
+                own_lane_index[own_lane == lane_label] = lane_index
+            data['on_lane_with_far_car'] = (max_distance_lane == own_lane_index).float()
 
         # aux_high_speed_lane = penalize low speed on lane in neighbourhood
         if 'aux_high_speed_lane' in coefs and coefs['aux_high_speed_lane'] > 0:
-            same_lane = lane == lane[:, :, 0:1]
-            other_lane = lane != lane[:, :, 0:1]
+            neighborhood = 0.25
+            lane_labels, _ = torch.sort(torch.unique(lane)[:2])
+            own_pos = pos[:, :, 0:1]
+            ahead_limit = own_pos + neighborhood
+            trail_limit = own_pos - neighborhood
+            second_ahead_limit = ahead_limit.clone()
+            second_ahead_limit -= 1
+            second_trail_limit = trail_limit.clone()
+            second_trail_limit += 1
 
-            same_lane_speed = speed.clone()
-            same_lane_speed[same_lane] = 0.0
-            other_lane_speed = speed.clone()
-            other_lane_speed[other_lane] = 0.0
+            data['mean_speed_lane'] = []
 
-            same_lane_speed = same_lane_speed.sum(dim=2, keepdim=True) / same_lane.sum(dim=2, keepdim=True).float()
-            other_lane_speed = other_lane_speed.sum(dim=2, keepdim=True) / other_lane.sum(dim=2, keepdim=True).float()
-            same_lane_speed = same_lane_speed[:-1]
-            other_lane_speed = other_lane_speed[:-1]
+            simple_neighborhood = torch.min(pos < ahead_limit, pos > trail_limit)
+            clipped_neighborhood = torch.max(pos < second_ahead_limit, pos > second_trail_limit)
+            in_neighborhood = torch.max(simple_neighborhood, clipped_neighborhood)
+            for lane_label in lane_labels:
+                same_lane = lane == lane_label
+                same_lane_neighborhood = torch.min(in_neighborhood, same_lane)
 
-            data['on_higher_mean_speed_lane'] = torch.gt(same_lane_speed, other_lane_speed).float()
+                outsiders = 1 - same_lane_neighborhood
+                neighborhood_speed = speed.clone()
+                neighborhood_speed[outsiders] = 0
+                mean_speed = neighborhood_speed.sum(dim=2, keepdim=True) / same_lane_neighborhood.sum(dim=2,
+                                                                                              keepdim=True).float()
+
+                data['mean_speed_lane'].append(mean_speed)
+
+            max_mean_speed, max_mean_speed_lane = torch.max(torch.cat(data['mean_speed_lane'], dim=2), dim=2, keepdim=True)
+
+            own_lane = lane[:, :, 0:1]
+            own_lane_index = max_mean_speed_lane.clone()
+            for lane_index, lane_label in enumerate(lane_labels):
+                own_lane_index[own_lane == lane_label] = lane_index
+
+            data['on_higher_mean_speed_lane'] = (max_mean_speed_lane == own_lane_index).float()
 
         return data
 
@@ -278,52 +316,52 @@ class MyPPO(algo.PPO):
         coefs = self.aux_coefs
         feature_size = self.actor_critic.base.output_size
         if 'aux_others' in coefs and coefs['aux_others'] > 0:
-            self.aux_module['acc_predictor'] = DiagGaussian(feature_size, 23).to(self.device)
-            self.aux_module['lane_predictors'] = []
-            for i in range(23):
-                self.aux_module['lane_predictors'].append(Categorical(feature_size, 2 * 23).to(self.device))
+            self.aux_module['acc_predictors'] = Bernoulli(feature_size, 23).to(self.device)
+            self.aux_module['lane_predictors'] = Bernoulli(feature_size, 23).to(self.device)
 
         # aux_reward_coef = predict reward
         if 'aux_reward' in coefs and coefs['aux_reward'] > 0:
-            self.aux_module['reward_predictor'] = DiagGaussian(feature_size, 1).to(self.device)
+            self.aux_module['reward_predictor'] = Bernoulli(feature_size, 1).to(self.device)
 
         # aux_closest_car_coef = penalize distance to closest car
         if 'aux_closest_car' in coefs and coefs['aux_closest_car'] > 0:
-            self.aux_module['closest_car_predictor'] = DiagGaussian(feature_size, 1).to(self.device)
+            self.aux_module['closest_car_predictor'] = Bernoulli(feature_size, 1).to(self.device)
 
         # aux_high_speed_lane = penalize if on lower speed lane
         if 'aux_high_speed_lane' in coefs and coefs['aux_high_speed_lane'] > 0:
-            self.aux_module['on_high_speed_lane_predictor'] = Categorical(feature_size, 2).to(self.device)
+            self.aux_module['on_high_speed_lane_predictor'] = Bernoulli(feature_size, 1).to(self.device)
 
     def compute_aux_losses(self, features, rewards, aux_data):
         coefs = self.aux_coefs
         # aux_others_coef = model other agents
         losses = {}
         if 'aux_others' in coefs and coefs['aux_others'] > 0:
-            predicted_acc = self.aux_module['acc_predictor'](features).sample()
-            losses['aux_others'] = (predicted_acc - aux_data['acc']).pow(2).mean()
+            losses['aux_others'] = 0
 
-            for car_index, predictor in enumerate(self.aux_module['lane_predictors']):
-                s = predictor(features).sample().float()
-                losses['aux_others'] += F.binary_cross_entropy_with_logits(s, aux_data['lane_change'][:, car_index:car_index+1], reduction='none').mean()
+            acc = self.aux_module['acc_predictors'](features)
+            s = self.aux_module['lane_predictors'](features)
+            losses['aux_others'] += BNE(acc.logits, aux_data['acc'], reduction='none').mean()
+            losses['aux_others'] += BNE(s.logits, aux_data['lane_change'], reduction='none').mean()
 
         # aux_reward_coef = predict reward
         if 'aux_reward' in coefs and coefs['aux_reward'] > 0:
-            predicted_rewards = self.aux_module['reward_predictor'](features).sample()
-            aux_reward_loss = (predicted_rewards - rewards).pow(2).mean()
+            predicted_rewards = self.aux_module['reward_predictor'](features)
+
+            aux_reward_loss = BNE(predicted_rewards.logits, aux_data['rewards_categ'], reduction='none').mean()
             losses['aux_reward'] = aux_reward_loss
 
         # aux_closest_car_coef = penalize distance to closest car
         if 'aux_closest_car' in coefs and coefs['aux_closest_car'] > 0:
-            closest = self.aux_module['closest_car_predictor'](features).sample()
-            losses['aux_closest_car'] = (closest - aux_data['distance_to_closest']).pow(2).mean()
+            closest = self.aux_module['closest_car_predictor'](features)
+            losses['aux_closest_car'] = BNE(closest.logits, aux_data['on_lane_with_far_car'], reduction='none').mean()
                                         # + closest
 
         # aux_high_speed_lane = penalize if on lower speed lane
         if 'aux_high_speed_lane' in coefs and coefs['aux_high_speed_lane'] > 0:
-            loss_on_high_speed_lane = self.aux_module['on_high_speed_lane_predictor'](features).sample().float()
-            losses['aux_high_speed_lane'] = F.binary_cross_entropy_with_logits(loss_on_high_speed_lane,
-                                                                               aux_data['on_higher_mean_speed_lane'])
+            loss_on_high_speed_lane = self.aux_module['on_high_speed_lane_predictor'](features)
+            losses['aux_high_speed_lane'] = BNE(loss_on_high_speed_lane.logits,
+                                                       aux_data['on_higher_mean_speed_lane'], reduction='none').mean()
+
         return losses
 
 
@@ -474,7 +512,7 @@ def get_my_args():
         default=False,
         help='use a linear schedule on the learning rate')
 
-    # --aux-others-coef  0.005 --aux-reward-coef  0.02 --aux-closest-car-coef  0.02 --aux-high-speed-lane-coef 0.05
+    # --aux-others-coef  0.02 --aux-reward-coef  0.05 --aux-closest-car-coef  0.05 --aux-high-speed-lane-coef 0.05
     parser.add_argument(
         '--aux-others-coef',
         type=float,
