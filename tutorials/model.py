@@ -371,7 +371,7 @@ class MyPPO(algo.PPO):
 
 
 class MYMLPBase(NNBase):
-    def __init__(self, num_inputs, recurrent=False, hidden_size=128):
+    def __init__(self, num_inputs, recurrent=False, hidden_size=256):
         super(MYMLPBase, self).__init__(recurrent, num_inputs, hidden_size)
 
         if recurrent:
@@ -382,6 +382,7 @@ class MYMLPBase(NNBase):
 
         self.backbone = nn.Sequential(
             init_(nn.Linear(num_inputs, hidden_size)), nn.Tanh(),
+            init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
             init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
             init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
             init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
@@ -402,7 +403,7 @@ class MYMLPBase(NNBase):
 
 
 class AuxHead(nn.Module):
-    def __init__(self, hidden_layers=2, hidden_size=128, input_count=1, output_size=1, output_distr_type='bernoulli'):
+    def __init__(self, hidden_layers=3, hidden_size=256, input_count=1, output_size=1, output_distr_type='bernoulli'):
         super().__init__()
         self.hidden_layers = nn.ModuleList()
         init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
