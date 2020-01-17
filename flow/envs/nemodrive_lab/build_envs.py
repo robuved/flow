@@ -60,4 +60,4 @@ def make_lab_env(env_name, sim_step=0.1, render=False, emission_path='data',
 
     create_env, gym_name = make_create_env(params=flow_params, version=0)
     create_env()
-    return gym_name, flow_json
+    return gym_name, flow_params, flow_json

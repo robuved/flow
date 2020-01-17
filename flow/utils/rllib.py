@@ -103,8 +103,13 @@ def get_flow_params(config):
             "flow.controllers",
             fromlist=[veh_params['acceleration_controller'][0]])
         acc_class = getattr(module, veh_params['acceleration_controller'][0])
-        lc_class = getattr(module, veh_params['lane_change_controller'][0])
-
+        try:
+            lc_class = getattr(module, veh_params['lane_change_controller'][0])
+        except:
+            module1 = __import__(
+                "flow.envs.nemodrive_lab.lane_change_controller",
+                fromlist=[veh_params['acceleration_controller'][0]])
+            lc_class = getattr(module1, veh_params['lane_change_controller'][0])
         acc_controller = (acc_class, veh_params['acceleration_controller'][1])
         lc_controller = (lc_class, veh_params['lane_change_controller'][1])
 
