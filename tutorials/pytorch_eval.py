@@ -84,7 +84,7 @@ def main():
     device = torch.device("cuda:0" if args.cuda else "cpu")
 
     if args.env_name.startswith("lab_"):
-        gym_name, flow_json = make_lab_env(args.env_name)
+        gym_name, flow_params, flow_json = make_lab_env(args.env_name)
 
         args.env_name = gym_name
 

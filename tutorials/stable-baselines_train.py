@@ -7,6 +7,7 @@ vehicles in a variable length ring road.
 import argparse
 import json
 import os
+import numpy as np
 
 from stable_baselines.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines import PPO2
@@ -27,7 +28,7 @@ def update_linear_schedule(frac, initial_lr):
     return lr
 
 
-def run_model(num_cpus=1, rollout_size=50, num_steps=50, num_mini_batch=4, tensorboard_log=None):
+def run_model(flow_params, num_cpus=1, rollout_size=50, num_steps=50, num_mini_batch=4, tensorboard_log=None):
     """Run the model for num_steps if provided. The total rollout length is rollout_size."""
     if num_cpus == 1:
         constructor = env_constructor(params=flow_params, version=0)()
@@ -42,21 +43,9 @@ def run_model(num_cpus=1, rollout_size=50, num_steps=50, num_mini_batch=4, tenso
     return model
 
 
-if __name__ == "__main__":
-    # "--num-cpus 4 --num-steps 2600000 --rollout-size 128 --result-name lab_env2_train --env-name lab_env2 --num-mini-batch 4 --tensorboard-log ./lab_env2"
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--num-cpus', type=int, default=1, help='How many CPUs to use')
-    parser.add_argument('--num-steps', type=int, default=5000, help='How many total steps to perform learning over')
-    parser.add_argument('--rollout-size', type=int, default=1000, help='How many steps are in a training batch.')
-    parser.add_argument('--result-name', type=str, default='lab_env2', help='Name of saved model')
-    parser.add_argument("--env-name", type=str, default='lab_env2')
-    parser.add_argument("--num-mini-batch", type=int, default=4)
-    parser.add_argument("--tensorboard-log", type=str, default=None)
-
-    args = parser.parse_args()
-
+def train(args):
     gym_name, flow_params, flow_json = make_lab_env(args.env_name)
-    model = run_model(args.num_cpus, args.rollout_size, args.num_steps, args.num_mini_batch,
+    model = run_model(flow_params, args.num_cpus, args.rollout_size, args.num_steps, args.num_mini_batch,
                       tensorboard_log=args.tensorboard_log)
     # Save the model to a desired folder and then delete it to demonstrate loading
     if not os.path.exists(os.path.realpath(os.path.expanduser('~/baseline_results'))):
@@ -69,20 +58,49 @@ if __name__ == "__main__":
     # dump the flow params
     with open(os.path.join(path, args.result_name) + '.json', 'w') as outfile:
         json.dump(flow_params, outfile,  cls=FlowParamsEncoder, sort_keys=True, indent=4)
-    del model
-    del flow_params
 
+
+def evaluate(args):
     # Replay the result by loading the model
     print('Loading the trained model and testing it out!')
+    path = os.path.realpath(os.path.expanduser('~/baseline_results'))
+    save_path = os.path.join(path, args.result_name)
     model = PPO2.load(save_path)
     flow_params = get_flow_params(os.path.join(path, args.result_name) + '.json')
-    flow_params['sim'].render = True
-    env_constructor = env_constructor(params=flow_params, version=0)()
-    env = DummyVecEnv([lambda: env_constructor])  # The algorithms require a vectorized environment to run
+    flow_params['sim'].render = False
+
+    env_constructor_ = env_constructor(params=flow_params, version=0)()
+    env = DummyVecEnv([lambda: env_constructor_])  # The algorithms require a vectorized environment to run
     obs = env.reset()
-    reward = 0
-    for i in range(flow_params['env'].horizon):
+
+    eval_episode_rewards = []
+    r = 0
+    while len(eval_episode_rewards) < 10:
+    # for i in range(flow_params['env'].horizon):
         action, _states = model.predict(obs)
-        obs, rewards, dones, info = env.step(action)
-        reward += rewards
-    print('the final reward is {}'.format(reward))
+        obs, rewards, dones, infos = env.step(action)
+        r += rewards[0]
+        if dones[0]:
+            eval_episode_rewards.append(r)
+            r = 0
+
+    env.close()
+
+    print(" Evaluation using {} episodes: mean reward {:.5f}\n".format(
+        len(eval_episode_rewards), np.mean(eval_episode_rewards)))
+    # print('the final reward is {}'.format(reward))
+
+
+if __name__ == "__main__":
+    # "--num-cpus 4 --num-steps 2600000 --rollout-size 128 --result-name lab_env2_train --env-name lab_env2 --num-mini-batch 4 --tensorboard-log ./lab_env2"
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--num-cpus', type=int, default=1, help='How many CPUs to use')
+    parser.add_argument('--num-steps', type=int, default=5000, help='How many total steps to perform learning over')
+    parser.add_argument('--rollout-size', type=int, default=1000, help='How many steps are in a training batch.')
+    parser.add_argument('--result-name', type=str, default='lab_env2', help='Name of saved model')
+    parser.add_argument("--env-name", type=str, default='lab_env2')
+    parser.add_argument("--num-mini-batch", type=int, default=4)
+    parser.add_argument("--tensorboard-log", type=str, default=None)
+    args = parser.parse_args()
+    # train(args)
+    evaluate(args)

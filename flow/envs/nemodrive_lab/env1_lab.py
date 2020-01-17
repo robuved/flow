@@ -49,6 +49,8 @@ class LaneChangeAccelEnv1(AccelEnv):
     """
 
     def __init__(self, env_params, sim_params, network, simulator='traci'):
+        print('Initializing lab env 1')
+
         for p in ADDITIONAL_ENV1_PARAMS.keys():
             if p not in env_params.additional_params:
                 raise KeyError(
